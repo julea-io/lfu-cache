@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::collections::hash_map;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
@@ -7,7 +8,6 @@ use std::iter::{FromIterator, FusedIterator};
 use std::num::NonZeroUsize;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::collections::hash_map;
 
 use crate::{Entry, LfuCacheIter};
 
@@ -282,6 +282,47 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
         })
     }
 
+    /// Evicts the least frequently used value and returns it. If the cache is
+    /// empty, then this returns None. If there are multiple items that have an
+    /// equal access count, then the most recently added value is evicted.
+    #[inline]
+    pub fn pop_mfu(&mut self) -> Option<Value> {
+        self.pop_mfu_key_value_frequency().map(|(_, v, _)| v)
+    }
+
+    /// Evicts the least frequently used key-value pair and returns it. If the
+    /// cache is empty, then this returns None. If there are multiple items that
+    /// have an equal access count, then the most recently added key-value pair
+    /// is evicted.
+    #[inline]
+    pub fn pop_mfu_key_value(&mut self) -> Option<(Key, Value)> {
+        self.pop_mfu_key_value_frequency().map(|(k, v, _)| (k, v))
+    }
+
+    /// Evicts the least frequently used value and returns it, the key it was
+    /// inserted under, and the frequency it had. If the cache is empty, then
+    /// this returns None. If there are multiple items that have an equal access
+    /// count, then the most recently added key-value pair is evicted.
+    #[inline]
+    pub fn pop_mfu_key_value_frequency(&mut self) -> Option<(Key, Value, usize)> {
+        self.freq_list.pop_mfu().map(|mut entry_ptr| {
+            // SAFETY: This is fine since self is uniquely borrowed.
+            let key = unsafe { entry_ptr.as_ref().key.as_ref() };
+            self.lookup.0.remove(key);
+
+            // SAFETY: entry_ptr is guaranteed to be a live reference and is
+            // is separated from the data structure as a guarantee of pop_lfu.
+            // As a result, at this point, we're guaranteed that we have the
+            // only reference of entry_ptr.
+            let entry = unsafe { Box::from_raw(entry_ptr.as_mut()) };
+            let key = match Rc::try_unwrap(entry.key) {
+                Ok(k) => k,
+                Err(_) => unsafe { unreachable_unchecked() },
+            };
+            (key, entry.value, unsafe { entry.owner.as_ref().frequency })
+        })
+    }
+
     /// Clears the cache, returning the iterator of the previous cached values.
     pub fn clear(&mut self) -> LfuCacheIter<Key, Value> {
         let mut to_return = Self::with_capacity(self.capacity.map_or(0, NonZeroUsize::get));
@@ -522,7 +563,7 @@ mod pop {
     use super::LfuCache;
 
     #[test]
-    fn pop() {
+    fn pop_lfu() {
         let mut cache = LfuCache::unbounded();
         for i in 0..100 {
             cache.insert(i, i + 100);
@@ -532,6 +573,39 @@ mod pop {
             assert_eq!(cache.lookup.0.len(), 100 - i);
             assert_eq!(cache.pop_lfu(), Some(200 - i - 1));
         }
+    }
+
+    #[test]
+    fn pop_mfu() {
+        let mut cache = LfuCache::unbounded();
+        for i in 0..100 {
+            cache.insert(i, i + 100);
+        }
+
+        cache.get(&69);
+        cache.get(&70);
+        cache.get(&71);
+        cache.get(&98);
+        cache.get(&99);
+        assert_eq!(cache.pop_mfu(), Some(199));
+        assert_eq!(cache.pop_mfu(), Some(198));
+        assert_eq!(cache.pop_mfu(), Some(171));
+        assert_eq!(cache.pop_mfu(), Some(170));
+        assert_eq!(cache.pop_mfu(), Some(169));
+
+        cache.get(&35);
+        cache.get(&34);
+        cache.get(&33);
+        cache.get(&12);
+        assert_eq!(cache.pop_mfu(), Some(112));
+        assert_eq!(cache.pop_mfu(), Some(133));
+        assert_eq!(cache.pop_mfu(), Some(134));
+        assert_eq!(cache.pop_mfu(), Some(135));
+
+        // for i in 0..100 {
+        //     assert_eq!(cache.lookup.0.len(), 100 - i);
+        //     assert_eq!(cache.pop_mfu(), Some(200 - i - 1));
+        // }
     }
 
     #[test]
@@ -627,6 +701,7 @@ mod remove {
         cache.remove(&1);
         assert!(cache.get(&3).is_some());
         assert!(cache.get(&5).is_some());
+        assert_eq!(cache.len(), 4)
     }
 
     #[test]
@@ -742,4 +817,16 @@ mod bookkeeping {
             assert!(cache.get(&i).is_none());
         }
     }
+
+    // FIXME: This test provokes a lock up as the updates cannot proceed
+    // #[test]
+    // fn shrinking_smaller_size() {
+    //     let mut cache = LfuCache::unbounded();
+    //     for i in 0..100 {
+    //         cache.insert(i, i + 100);
+    //     }
+    //     assert!(!cache.is_empty());
+    //     cache.set_capacity(50);
+    //     assert!(cache.len() == 50);
+    // }
 }

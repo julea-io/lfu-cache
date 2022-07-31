@@ -8,6 +8,7 @@ use super::{LfuEntry, Node};
 #[derive(Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(super) struct FrequencyList<Key: Hash + Eq, T> {
     pub(super) head: Option<NonNull<Node<Key, T>>>,
+    pub(super) tail: Option<NonNull<Node<Key, T>>>,
     pub(super) len: usize,
 }
 
@@ -65,7 +66,11 @@ impl<Key: Hash + Eq, T> Drop for FrequencyList<Key, T> {
 impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
     #[inline]
     pub(super) fn new() -> Self {
-        Self { head: None, len: 0 }
+        Self {
+            head: None,
+            tail: None,
+            len: 0,
+        }
     }
 
     /// Inserts an item into the frequency list, returning a pointer to the
@@ -104,6 +109,9 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
 
             let head = unsafe { head.as_mut() };
             head.prev = Some(node);
+        } else {
+            // If no node existed before set the new node as tail
+            self.tail = Some(node);
         }
 
         self.head = Some(node);
@@ -136,7 +144,11 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
             // SAFETY: self is exclusively accessed
             Some(node) if unsafe { node.as_ref() }.frequency == freq_list_node_freq + 1 => (),
             _ => {
+                let was_tail = freq_list_node.next.is_none();
                 freq_list_node.create_increment();
+                if was_tail {
+                    self.tail = freq_list_node.next;
+                }
                 self.len += 1;
             }
         }
@@ -176,14 +188,52 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
 
     #[inline]
     pub(super) fn pop_lfu(&mut self) -> Option<NonNull<LfuEntry<Key, T>>> {
-        self.head
-            .as_mut()
-            .and_then(|node| unsafe { node.as_mut() }.pop())
+        // What happens when this access empties the list this is i suppose not as intended and should be followed by an update
+        // Answer: It is stuck..
+        if let Some(head) = self.head.as_mut() {
+            // SAFETY - mutable reference
+            let head_node = unsafe { head.as_mut() };
+            let item = head_node.pop();
+            if head_node.elements.is_none() {
+                self.head = head_node.prev;
+                if let Some(mut next) = head_node.next {
+                    let next_node = unsafe { next.as_mut() };
+                    next_node.next = head_node.next;
+                }
+            }
+            return item;
+        }
+        None
+    }
+
+    #[inline]
+    pub(super) fn pop_mfu(&mut self) -> Option<NonNull<LfuEntry<Key, T>>> {
+        if let Some(tail) = self.tail.as_mut() {
+            // SAFETY - mutable reference
+            let tail_node = unsafe { tail.as_mut() };
+            let item = tail_node.pop();
+            if tail_node.elements.is_none() {
+                self.tail = tail_node.prev;
+                if let Some(mut prev) = tail_node.prev {
+                    let prev_node = unsafe { prev.as_mut() };
+                    prev_node.next = tail_node.next;
+                }
+            }
+            return item;
+        }
+        None
     }
 
     #[inline]
     pub(super) fn peek_lfu(&self) -> Option<&T> {
         self.head
+            .as_ref()
+            .and_then(|node| unsafe { node.as_ref() }.peek())
+    }
+
+    #[inline]
+    pub(super) fn peek_mfu(&mut self) -> Option<&T> {
+        self.tail
             .as_ref()
             .and_then(|node| unsafe { node.as_ref() }.peek())
     }
@@ -215,6 +265,7 @@ mod frequency_list {
     fn new_is_empty() {
         let list = init_list();
         assert!(list.head.is_none());
+        assert!(list.tail.is_none());
         assert_eq!(list.len, 0);
         assert!(list.frequencies().is_empty());
     }
@@ -227,6 +278,7 @@ mod frequency_list {
         assert_eq!(entry.next, None);
         assert_eq!(entry.value, 2);
         assert_eq!(entry.owner, list.head.unwrap());
+        assert_eq!(entry.owner, list.tail.unwrap());
     }
 
     #[test]
@@ -281,6 +333,7 @@ mod frequency_list {
         let mut list = init_list();
         let front_node = list.init_front();
         assert_eq!(list.head, Some(front_node));
+        assert_eq!(list.tail, Some(front_node));
         assert_eq!(list.len, 1);
 
         let front_node = unsafe { front_node.as_ref() };
@@ -294,6 +347,7 @@ mod frequency_list {
 
         let back_node = list.init_front();
         assert_eq!(list.head, Some(back_node));
+        assert_eq!(list.tail, Some(back_node));
         assert_eq!(list.len, 1);
         {
             let back_node = unsafe { back_node.as_ref() };
@@ -303,6 +357,7 @@ mod frequency_list {
 
         let middle_node = list.init_front();
         assert_eq!(list.head, Some(middle_node));
+        assert_eq!(list.tail, Some(back_node));
         assert_eq!(list.len, 2);
         {
             // validate middle node connections
@@ -319,6 +374,7 @@ mod frequency_list {
 
         let front_node = list.init_front();
         assert_eq!(list.head, Some(front_node));
+        assert_eq!(list.tail, Some(back_node));
         assert_eq!(list.len, 3);
         {
             // validate front node connections
@@ -350,6 +406,8 @@ mod frequency_list {
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 1);
         list.update(entry);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 2);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 2);
+        assert_eq!(list.frequencies(), vec![2]);
 
         // unleak entry
         unsafe { Box::from_raw(entry.as_ptr()) };
@@ -361,12 +419,16 @@ mod frequency_list {
         let entry_0 = list.insert(Rc::new(1), 2);
         let entry_1 = list.insert(Rc::new(3), 4);
 
+        assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 0);
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 1);
         assert_eq!(list.frequencies(), vec![0, 1]);
         list.update(entry_1);
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 1);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 2);
         assert_eq!(list.frequencies(), vec![1, 2]);
 
         // unleak entry
@@ -382,9 +444,11 @@ mod frequency_list {
 
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 1);
         assert_eq!(list.frequencies(), vec![0, 1]);
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 2);
         assert_eq!(list.frequencies(), vec![0, 2]);
 
         // unleak entry

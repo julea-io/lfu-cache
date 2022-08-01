@@ -138,7 +138,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
 
     /// Like [`Self::insert`], but with an shared key instead.
     pub(crate) fn insert_rc(&mut self, key: Rc<Key>, value: Value) -> Option<Value> {
-        let mut evicted = self.remove(&key);
+        let mut evicted = self.remove(&key).map(|e| e.0);
 
         if let Some(capacity) = self.capacity {
             // This never gets called if we had to evict an old value.
@@ -201,7 +201,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
 
     /// Removes a value from the cache by key, if it exists.
     #[inline]
-    pub fn remove(&mut self, key: &Key) -> Option<Value> {
+    pub fn remove(&mut self, key: &Key) -> Option<(Value, usize)> {
         self.lookup.0.remove(key).map(|mut node| {
             // SAFETY: We have unique access to self. At this point, we've
             // removed the entry from the lookup map but haven't removed it from
@@ -624,7 +624,7 @@ mod remove {
     fn remove_to_empty() {
         let mut cache = LfuCache::unbounded();
         cache.insert(1, 2);
-        assert_eq!(cache.remove(&1), Some(2));
+        assert_eq!(cache.remove(&1).map(|e| e.0), Some(2));
         assert!(cache.is_empty());
         assert_eq!(cache.freq_list.len, 0);
     }
@@ -641,11 +641,11 @@ mod remove {
         cache.insert(1, 2);
         cache.insert(3, 4);
 
-        assert_eq!(cache.remove(&1), Some(2));
+        assert_eq!(cache.remove(&1).map(|e| e.0), Some(2));
 
         assert!(!cache.is_empty());
 
-        assert_eq!(cache.remove(&3), Some(4));
+        assert_eq!(cache.remove(&3).map(|e| e.0), Some(4));
 
         assert!(cache.is_empty());
         assert_eq!(cache.freq_list.len, 0);
@@ -736,7 +736,7 @@ mod remove {
         cache.insert(1, 1);
         cache.insert(2, 2);
         assert_eq!(cache.get(&1), Some(&1));
-        assert_eq!(cache.remove(&2), Some(2));
+        assert_eq!(cache.remove(&2).map(|e| e.0), Some(2));
         assert_eq!(cache.get(&1), Some(&1));
     }
 }

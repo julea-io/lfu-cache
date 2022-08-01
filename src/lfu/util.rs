@@ -7,7 +7,7 @@ pub(super) fn remove_entry_pointer<Key, Value>(
     mut node: LfuEntry<Key, Value>,
     freq_list: &mut FrequencyList<Key, Value>,
     len: &mut usize,
-) -> Value
+) -> (Value, usize)
 where
     Key: Hash + Eq,
 {
@@ -48,5 +48,5 @@ where
     }
     *len -= 1;
 
-    node.value
+    (node.value, owner.frequency)
 }

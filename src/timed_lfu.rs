@@ -127,7 +127,7 @@ impl<Key: Hash + Eq, Value> TimedLfuCache<Key, Value> {
     /// Calling this method will automatically evict expired entries before
     /// removing the value.
     #[inline]
-    pub fn remove(&mut self, key: &Key) -> Option<Value> {
+    pub fn remove(&mut self, key: &Key) -> Option<(Value, usize)> {
         self.evict_expired();
         self.cache.remove(key)
     }

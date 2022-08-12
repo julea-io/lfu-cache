@@ -268,6 +268,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
             // SAFETY: This is fine since self is uniquely borrowed.
             let key = unsafe { entry_ptr.as_ref().key.as_ref() };
             self.lookup.0.remove(key);
+            self.len -= 1;
 
             // SAFETY: entry_ptr is guaranteed to be a live reference and is
             // is separated from the data structure as a guarantee of pop_lfu.
@@ -309,6 +310,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
             // SAFETY: This is fine since self is uniquely borrowed.
             let key = unsafe { entry_ptr.as_ref().key.as_ref() };
             self.lookup.0.remove(key);
+            self.len -= 1;
 
             // SAFETY: entry_ptr is guaranteed to be a live reference and is
             // is separated from the data structure as a guarantee of pop_lfu.
@@ -606,6 +608,36 @@ mod pop {
         //     assert_eq!(cache.lookup.0.len(), 100 - i);
         //     assert_eq!(cache.pop_mfu(), Some(200 - i - 1));
         // }
+    }
+
+    #[test]
+    fn pop_mfu_empty() {
+        let mut cache = LfuCache::unbounded();
+        for i in 0..100 {
+            cache.insert(i, i);
+        }
+        for i in 0..50 {
+            for _ in 0..i+1 {
+                cache.get(&(i * 2));
+            }
+        }
+        let mut last = 100;
+        for i in 0..50 {
+            assert_eq!(cache.lookup.0.len(), 100 - i);
+            let foo = cache.pop_mfu().unwrap();
+            dbg!(foo);
+            dbg!(last);
+            assert!(foo % 2 == 0);
+            assert!(foo == last - 2);
+            last = foo;
+        }
+        for i in 0..50 {
+            assert_eq!(cache.lookup.0.len(), 50 - i);
+            assert!(cache.pop_mfu().unwrap() % 2 == 1);
+            if i == 49 {
+                assert!(cache.is_empty());
+            }
+        }
     }
 
     #[test]

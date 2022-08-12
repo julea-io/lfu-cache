@@ -148,6 +148,7 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
                 freq_list_node.create_increment();
                 if was_tail {
                     self.tail = freq_list_node.next;
+                    assert!(self.tail.is_some());
                 }
                 self.len += 1;
             }
@@ -212,10 +213,14 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
         if let Some(tail) = self.tail.as_mut() {
             // SAFETY - mutable reference
             let tail_node = unsafe { tail.as_mut() };
+            assert!(tail_node.next.is_none());
             let item = tail_node.pop();
             if tail_node.elements.is_none() {
                 self.len -= 1;
                 self.tail = tail_node.prev;
+                if self.len == 0 {
+                    self.head = self.tail;
+                }
                 if let Some(mut prev) = tail_node.prev {
                     let prev_node = unsafe { prev.as_mut() };
                     prev_node.next = tail_node.next;

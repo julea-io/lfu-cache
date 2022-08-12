@@ -575,6 +575,7 @@ mod pop {
             assert_eq!(cache.lookup.0.len(), 100 - i);
             assert_eq!(cache.pop_lfu(), Some(200 - i - 1));
         }
+        assert!(cache.is_empty());
     }
 
     #[test]
@@ -638,6 +639,18 @@ mod pop {
                 assert!(cache.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn pop_mfu_init() {
+        let mut cache = LfuCache::unbounded();
+        for i in 0..100 {
+            cache.insert(i,i);
+        }
+        for i in 0..100 {
+            assert_eq!(cache.pop_mfu(), Some(99 - i));
+        }
+        assert!(cache.is_empty());
     }
 
     #[test]

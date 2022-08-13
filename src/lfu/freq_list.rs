@@ -234,7 +234,7 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
                 }
                 if let Some(mut prev) = tail_node.prev {
                     let prev_node = unsafe { prev.as_mut() };
-                    prev_node.next = None;
+                    prev_node.next = tail_node.next;
                 }
             }
             return item;

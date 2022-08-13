@@ -28,6 +28,8 @@ where
         if let Some(mut next) = owner.next {
             let next = unsafe { next.as_mut() };
             next.prev = owner.prev;
+        } else {
+            freq_list.tail = owner.prev;
         }
 
         if let Some(mut prev) = owner.prev {

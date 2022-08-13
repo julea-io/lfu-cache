@@ -221,10 +221,10 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
         if let Some(tail) = self.tail.as_mut() {
             // SAFETY - mutable reference
             let tail_node = unsafe { tail.as_mut() };
-            if tail_node.next.is_some() {
-                dbg!(&self);
-                panic!("Erroneous state encountered");
-            }
+            // if tail_node.next.is_some() {
+            //     dbg!(&self);
+            //     panic!("Erroneous state encountered");
+            // }
             let item = tail_node.pop();
             if tail_node.elements.is_none() {
                 self.len -= 1;

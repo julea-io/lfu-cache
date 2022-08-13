@@ -17,6 +17,14 @@ impl<Key: Hash + Eq, T> Debug for FrequencyList<Key, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut dbg = f.debug_struct("FrequencyList");
         dbg.field("len", &self.len);
+        dbg.field("head", &self.head.map(|node| {
+            let head = unsafe { node.as_ref() };
+            Some(head.frequency)
+        }));
+        dbg.field("tail", &self.tail.map(|node| {
+            let head = unsafe { node.as_ref() };
+            Some(head.frequency)
+        }));
 
         let mut node = self.head;
         while let Some(cur_node) = node {
@@ -213,7 +221,10 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
         if let Some(tail) = self.tail.as_mut() {
             // SAFETY - mutable reference
             let tail_node = unsafe { tail.as_mut() };
-            assert!(tail_node.next.is_none());
+            if tail_node.next.is_some() {
+                dbg!(&self);
+                panic!("Erroneous state encountered");
+            }
             let item = tail_node.pop();
             if tail_node.elements.is_none() {
                 self.len -= 1;

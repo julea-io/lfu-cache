@@ -321,6 +321,52 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
             })
     }
 
+    /// Evicts the most frequently used value and returns it. If the cache is
+    /// empty, then this returns None. If there are multiple items that have an
+    /// equal access count, then the most recently added value is evicted.
+    #[inline]
+    pub fn pop_mfu(&mut self) -> Option<Value> {
+        self.pop_mfu_key_value_frequency().map(|(_, v, _)| v)
+    }
+
+    /// Evicts the most frequently used key-value pair and returns it. If the
+    /// cache is empty, then this returns None. If there are multiple items that
+    /// have an equal access count, then the most recently added key-value pair
+    /// is evicted.
+    #[inline]
+    pub fn pop_mfu_key_value(&mut self) -> Option<(Key, Value)> {
+        self.pop_mfu_key_value_frequency().map(|(k, v, _)| (k, v))
+    }
+
+    /// Evicts the least frequently used value and returns it, the key it was
+    /// inserted under, and the frequency it had. If the cache is empty, then
+    /// this returns None. If there are multiple items that have an equal access
+    /// count, then the most recently added key-value pair is evicted.
+    #[inline]
+    pub fn pop_mfu_key_value_frequency(&mut self) -> Option<(Key, Value, usize)> {
+        self.freq_list
+            .pop_mfu()
+            .map(|WithFrequency(freq, detached)| {
+                // SAFETY: This is fine since self is uniquely borrowed.
+                let key = detached.key.as_ref();
+                self.lookup.0.remove(key);
+                self.len -= 1;
+
+                // SAFETY: entry_ptr is guaranteed to be a live reference and is
+                // is separated from the data structure as a guarantee of pop_lfu.
+                // As a result, at this point, we're guaranteed that we have the
+                // only reference of entry_ptr.
+
+                // false positive, lint doesn't respect match guard.
+                #[allow(clippy::option_if_let_else)]
+                let key = match Rc::try_unwrap(detached.key) {
+                    Ok(k) => k,
+                    Err(_) => unsafe { unreachable_unchecked() },
+                };
+                (key, detached.value, freq)
+            })
+    }
+
     /// Clears the cache, returning the iterator of the previous cached values.
     pub fn clear(&mut self) -> LfuCacheIter<Key, Value> {
         let mut to_return = Self::with_capacity(self.capacity.map_or(0, NonZeroUsize::get));
@@ -583,7 +629,7 @@ mod pop {
     }
 
     #[test]
-    fn pop_multiple_varying_frequencies() {
+    fn pop_lfu_multiple_varying_frequencies() {
         let mut cache = LfuCache::unbounded();
         for i in 0..10 {
             cache.insert(i, i + 10);
@@ -596,6 +642,23 @@ mod pop {
         for i in 0..10 {
             assert_eq!(10 - i, cache.len());
             assert_eq!(Some(i + 10), cache.pop_lfu());
+        }
+    }
+
+    #[test]
+    fn pop_mfu_multiple_varying_frequencies() {
+        let mut cache = LfuCache::unbounded();
+        for i in 0..10 {
+            cache.insert(i, i + 10);
+        }
+        for i in 0..10 {
+            for _ in 0..i * i {
+                cache.get(&i).unwrap();
+            }
+        }
+        for i in (0..10).rev() {
+            assert_eq!(i + 1, cache.len());
+            assert_eq!(Some(i + 10), cache.pop_mfu());
         }
     }
 }

@@ -59,6 +59,7 @@ pub(super) struct FrequencyList<Key: Hash + Eq, T> {
     /// The first node in the frequency list which may or may not exist. This
     /// item is heap allocated.
     pub(super) head: Option<NonNull<Node<Key, T>>>,
+    pub(super) tail: Option<NonNull<Node<Key, T>>>,
 }
 
 impl<Key: Hash + Eq, Value> Default for FrequencyList<Key, Value> {
@@ -118,7 +119,10 @@ impl<Key: Hash + Eq, T> Drop for FrequencyList<Key, T> {
 impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
     #[inline]
     pub(super) const fn new() -> Self {
-        Self { head: None }
+        Self {
+            head: None,
+            tail: None,
+        }
     }
 
     /// Inserts an item into the frequency list returning a pointer to the
@@ -171,6 +175,9 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
 
             let head = unsafe { head.as_mut() };
             head.prev = Some(node);
+        } else {
+            // If no node existed before set the new node as tail
+            self.tail = Some(node);
         }
 
         self.head = Some(node);
@@ -198,7 +205,14 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
         let next_node = match unsafe { &*freq_list_node }.next {
             // SAFETY: self is exclusively accessed
             Some(node) if unsafe { node.as_ref() }.frequency == freq_list_node_freq + 1 => node,
-            _ => Node::create_increment(NonNull::new(freq_list_node).unwrap()),
+            _ => {
+                let was_tail = unsafe { &*freq_list_node }.next.is_none();
+                let res = Node::create_increment(NonNull::new(freq_list_node).unwrap());
+                if was_tail {
+                    self.tail = unsafe { &*freq_list_node }.next;
+                }
+                res
+            }
         };
 
         // Remove from current frequency node
@@ -234,8 +248,38 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
         if head_node.elements.is_none() {
             // Remove the now empty head
             self.head = head_node.next;
+            // The list is now empty
+            if self.head.is_none() {
+                self.tail = None;
+            }
 
             let owned = unsafe { Box::from_raw(head_node_ptr.as_ptr()) };
+            owned.detach();
+        }
+        item
+    }
+
+    /// Removes the first entry of the tail element if the element exists.
+    ///
+    /// Since the first entry of the tail element is the most recently added
+    /// item, popping elements of the same frequency is Last In, First Out. In
+    /// other words, the lowest frequency items are selected, and of those
+    /// items, they are popped like a stack.
+    #[inline]
+    pub(super) fn pop_mfu(&mut self) -> Option<WithFrequency<Detached<Key, T>>> {
+        let mut tail_node_ptr = self.tail?;
+        let tail_node = unsafe { tail_node_ptr.as_mut() };
+
+        let item = tail_node.pop();
+        if tail_node.elements.is_none() {
+            // Remove the now empty tail
+            self.tail = tail_node.prev;
+            // The list is now empty
+            if self.tail.is_none() {
+                self.head = None;
+            }
+
+            let owned = unsafe { Box::from_raw(tail_node_ptr.as_ptr()) };
             owned.detach();
         }
         item
@@ -246,6 +290,13 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
     #[inline]
     pub(super) fn peek_lfu(&self) -> Option<&T> {
         self.head.and_then(|node| unsafe { node.as_ref() }.peek())
+    }
+
+    /// Returns the most recently added, most frequently accessed item if it
+    /// exists.
+    #[inline]
+    pub(super) fn peek_mfu(&self) -> Option<&T> {
+        self.tail.and_then(|node| unsafe { node.as_ref() }.peek())
     }
 
     /// Returns an iterator of all frequencies in the list.
@@ -301,6 +352,7 @@ mod frequency_list {
     fn new_is_empty() {
         let list = init_list();
         assert!(list.head.is_none());
+        assert!(list.tail.is_none());
         assert_eq!(list.len(), 0);
         assert!(list.frequencies().count() == 0);
     }
@@ -313,6 +365,7 @@ mod frequency_list {
         assert_eq!(entry.next, None);
         assert_eq!(entry.value, 2);
         assert_eq!(entry.owner, list.head.unwrap());
+        assert_eq!(entry.owner, list.tail.unwrap());
     }
 
     #[test]
@@ -374,6 +427,7 @@ mod frequency_list {
         let mut list = init_list();
         let front_node = list.init_front();
         assert_eq!(list.head, Some(front_node));
+        assert_eq!(list.tail, Some(front_node));
         assert_eq!(list.len(), 1);
 
         let front_node = unsafe { front_node.as_ref() };
@@ -387,6 +441,7 @@ mod frequency_list {
 
         let back_node = list.init_front();
         assert_eq!(list.head, Some(back_node));
+        assert_eq!(list.tail, Some(back_node));
         assert_eq!(list.len(), 1);
         {
             let back_node = unsafe { back_node.as_ref() };
@@ -396,6 +451,7 @@ mod frequency_list {
 
         let middle_node = list.init_front();
         assert_eq!(list.head, Some(middle_node));
+        assert_eq!(list.tail, Some(back_node));
         assert_eq!(list.len(), 2);
         {
             // validate middle node connections
@@ -412,6 +468,7 @@ mod frequency_list {
 
         let front_node = list.init_front();
         assert_eq!(list.head, Some(front_node));
+        assert_eq!(list.tail, Some(back_node));
         assert_eq!(list.len(), 3);
         {
             // validate front node connections
@@ -443,6 +500,7 @@ mod frequency_list {
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 1);
         list.update(entry);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 2);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 2);
 
         // unleak entry
         unsafe { Box::from_raw(entry.as_ptr()) };
@@ -454,12 +512,16 @@ mod frequency_list {
         let entry_0 = list.insert(Rc::new(1), 2);
         let entry_1 = list.insert(Rc::new(3), 4);
 
+        assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 0);
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 1);
         assert_eq!(list.frequencies().collect::<Vec<_>>(), vec![0, 1]);
         list.update(entry_1);
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 1);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 2);
         assert_eq!(list.frequencies().collect::<Vec<_>>(), vec![1, 2]);
 
         // unleak entry
@@ -475,9 +537,11 @@ mod frequency_list {
 
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 1);
         assert_eq!(list.frequencies().collect::<Vec<_>>(), vec![0, 1]);
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
+        assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 2);
         assert_eq!(list.frequencies().collect::<Vec<_>>(), vec![0, 2]);
 
         // unleak entry

@@ -131,8 +131,9 @@ impl<Key: Hash + Eq, T> Node<Key, T> {
         self.prev = None;
     }
 
-    pub(super) fn peek(&self) -> Option<&T> {
-        Some(&unsafe { self.elements?.as_ref() }.value)
+    pub(super) fn peek(&self) -> Option<(&Key, &T)> {
+        let entry = &unsafe { self.elements?.as_ref() };
+        Some((&entry.key, &entry.value))
     }
 
     pub(super) fn len(&self) -> usize {
@@ -371,7 +372,7 @@ mod node {
         let mut node = init_node();
         let entry = Detached::new(Rc::new(1), 2);
         Node::push(NonNull::from(&mut *node), entry);
-        assert_eq!(node.peek(), Some(&2));
+        assert_eq!(node.peek().map(|suc| suc.1), Some(&2));
     }
 
     #[test]

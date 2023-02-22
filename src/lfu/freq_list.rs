@@ -125,26 +125,70 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
         }
     }
 
+    /// Inserts an item into the frequency list returning a pointer to the item.
+    /// The frequency indicates at which position the item should be added. Note
+    /// that this operation is due to the required search no longer O(1) but
+    /// instead O(num_freq_nodes).
+    ///
+    ///
     /// Inserts an item into the frequency list returning a pointer to the
     /// item.
     ///
     /// Since this is a newly inserted item, it will always have an access count
     /// of zero.
     ///
+    /// # Complexity
+    ///
+    /// If frequency > 0 the cost is not guaranteed to be O(1).
+    ///
     /// # Memory ownership
     ///
     /// It is the caller's responsibility to free the returning pointer, usually
     /// via `Box::from_raw(foo.as_ptr())`.
-    pub(super) fn insert(&mut self, key: Rc<Key>, value: T) -> NonNull<LfuEntry<Key, T>> {
-        // Gets or creates a node with a frequency of zero.
-        // Lint false positive; the match guard is unaccounted for.
-        #[allow(clippy::option_if_let_else)]
-        let head = match self.head {
-            Some(head) if unsafe { head.as_ref() }.frequency == 0 => head,
-            _ => self.init_front(),
+    pub(super) fn insert_with_frequency(
+        &mut self,
+        key: Rc<Key>,
+        value: T,
+        frequency: usize,
+    ) -> NonNull<LfuEntry<Key, T>> {
+        let mut head = if let Some(head) = self.head {
+            head
+        } else {
+            self.init_front()
         };
 
-        Node::push(head, Detached::new(key, value))
+        while unsafe { head.as_ref() }.frequency < frequency {
+            let head_ref = unsafe { head.as_ref() };
+            if let Some(next) = head_ref.next {
+                head = next;
+            } else {
+                break;
+            }
+        }
+
+        match unsafe { head.as_ref() }.frequency {
+            head_freq if head_freq == frequency => Node::push(head, Detached::new(key, value)),
+            head_freq if head_freq > frequency => {
+                // Prepend before head
+                let prev = if let Some(prev) = unsafe { head.as_ref() }.prev {
+                    prev
+                } else {
+                    self.init_front()
+                };
+                let entry = Node::push(prev, Detached::new(key, value));
+                if unsafe { prev.as_ref() }.frequency != frequency {
+                    self.update(entry);
+                    unsafe { head.as_ref().prev.unwrap().as_mut().frequency = frequency }
+                }
+                entry
+            }
+            _ => {
+                // Append a new tail
+                let entry = Node::push(head, Detached::new(key, value));
+                self.update(entry);
+                entry
+            }
+        }
     }
 
     /// Creates a new node at the beginning of the frequency list with an access
@@ -366,7 +410,7 @@ mod frequency_list {
     #[test]
     fn insert() {
         let mut list = init_list();
-        let entry = unsafe { Box::from_raw(list.insert(Rc::new(1), 2).as_ptr()) };
+        let entry = unsafe { Box::from_raw(list.insert_with_frequency(Rc::new(1), 2, 0).as_ptr()) };
         assert_eq!(entry.prev, None);
         assert_eq!(entry.next, None);
         assert_eq!(entry.value, 2);
@@ -377,8 +421,8 @@ mod frequency_list {
     #[test]
     fn insert_non_empty() {
         let mut list = init_list();
-        let entry_0 = list.insert(Rc::new(1), 2);
-        let entry_1 = list.insert(Rc::new(3), 4);
+        let entry_0 = list.insert_with_frequency(Rc::new(1), 2, 0);
+        let entry_1 = list.insert_with_frequency(Rc::new(3), 4, 0);
 
         let entry_0_ref = unsafe { entry_0.as_ref() };
         let entry_1_ref = unsafe { entry_1.as_ref() };
@@ -404,9 +448,9 @@ mod frequency_list {
     #[test]
     fn insert_non_empty_non_freq_zero() {
         let mut list = init_list();
-        let entry_0_ptr = list.insert(Rc::new(1), 2).as_ptr();
+        let entry_0_ptr = list.insert_with_frequency(Rc::new(1), 2, 0).as_ptr();
         list.update(NonNull::new(entry_0_ptr).unwrap());
-        let entry_1_ptr = list.insert(Rc::new(3), 4).as_ptr();
+        let entry_1_ptr = list.insert_with_frequency(Rc::new(3), 4, 0).as_ptr();
 
         // validate entry_0
         let entry_0 = unsafe { &*entry_0_ptr };
@@ -500,7 +544,7 @@ mod frequency_list {
     #[test]
     fn update_removes_empty_node() {
         let mut list = init_list();
-        let entry = list.insert(Rc::new(1), 2);
+        let entry = list.insert_with_frequency(Rc::new(1), 2, 0);
 
         list.update(entry);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 1);
@@ -515,8 +559,8 @@ mod frequency_list {
     #[test]
     fn update_does_not_remove_non_empty_node() {
         let mut list = init_list();
-        let entry_0 = list.insert(Rc::new(1), 2);
-        let entry_1 = list.insert(Rc::new(3), 4);
+        let entry_0 = list.insert_with_frequency(Rc::new(1), 2, 0);
+        let entry_1 = list.insert_with_frequency(Rc::new(3), 4, 0);
 
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);
         assert_eq!(unsafe { list.tail.unwrap().as_ref() }.frequency, 0);
@@ -538,8 +582,8 @@ mod frequency_list {
     #[test]
     fn update_correctly_removes_in_middle_nodes() {
         let mut list = init_list();
-        let entry_0 = list.insert(Rc::new(1), 2);
-        let entry_1 = list.insert(Rc::new(3), 4);
+        let entry_0 = list.insert_with_frequency(Rc::new(1), 2, 0);
+        let entry_1 = list.insert_with_frequency(Rc::new(3), 4, 0);
 
         list.update(entry_0);
         assert_eq!(unsafe { list.head.unwrap().as_ref() }.frequency, 0);

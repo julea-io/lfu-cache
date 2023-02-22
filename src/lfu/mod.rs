@@ -157,11 +157,36 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
     // TODO: return a (Key, Value, Freq)
     #[inline]
     pub fn insert(&mut self, key: Key, value: Value) -> Option<Value> {
-        self.insert_rc(Rc::new(key), value)
+        self.insert_rc(Rc::new(key), value, 0)
+    }
+
+    /// Inserts a key-value pair into the cache with a given frequency. This operation is not O(1).
+    ///
+    /// If the key already exists, the value is updated without updating the
+    /// key and the previous value is returned. The frequency of this item is
+    /// reset.
+    ///
+    /// If the key did not already exist, then what is returned depends on the
+    /// capacity of the cache. If an entry was evicted, the old value is
+    /// returned. If the cache did not need to evict an entry or was unbounded,
+    /// this returns [None].
+    #[inline]
+    pub fn insert_with_frequency(
+        &mut self,
+        key: Key,
+        value: Value,
+        frequency: usize,
+    ) -> Option<Value> {
+        self.insert_rc(Rc::new(key), value, frequency)
     }
 
     /// Like [`Self::insert`], but with an shared key instead.
-    pub(crate) fn insert_rc(&mut self, key: Rc<Key>, value: Value) -> Option<Value> {
+    pub(crate) fn insert_rc(
+        &mut self,
+        key: Rc<Key>,
+        value: Value,
+        frequency: usize,
+    ) -> Option<Value> {
         let mut evicted = self.remove(&key);
 
         if let Some(capacity) = self.capacity {
@@ -185,7 +210,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
         //     the dangling pointer with an actual value.
         self.lookup.0.insert(Rc::clone(&key), NonNull::dangling());
         let v = self.lookup.0.get_mut(&key).unwrap();
-        *v = self.freq_list.insert(key, value);
+        *v = self.freq_list.insert_with_frequency(key, value, frequency);
 
         self.len += 1;
         evicted
@@ -927,5 +952,17 @@ mod bookkeeping {
 
         assert_eq!(cache.peek_lfu_frequency().unwrap().1, 0);
         assert_eq!(cache.peek_mfu_frequency().unwrap().1, 18);
+    }
+
+    #[test]
+    fn insert_with_frequency_first_node_is_frequency() {
+        let mut cache = LfuCache::unbounded();
+        cache.insert(1, 1);
+        for _ in 0..10 {
+            cache.get(&1);
+        }
+        assert_eq!(cache.peek_lfu_frequency().unwrap().1, 10);
+        cache.insert_with_frequency(2, 2, 5);
+        assert_eq!(cache.peek_lfu_frequency().unwrap().1, 5);
     }
 }

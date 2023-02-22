@@ -167,7 +167,7 @@ impl<'a, Key: Hash + Eq, Value> VacantEntry<'a, Key, Value> {
 
         &mut unsafe {
             self.inner
-                .insert(self.freq_list.insert(self.key, value))
+                .insert(self.freq_list.insert_with_frequency(self.key, value, 0))
                 .as_mut()
         }
         .value

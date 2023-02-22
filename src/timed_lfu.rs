@@ -89,7 +89,7 @@ impl<Key: Hash + Eq, Value> TimedLfuCache<Key, Value> {
         let key_rc = Rc::new(key);
         self.expiry_set
             .insert(ExpirationSetEntry(Rc::clone(&key_rc), Instant::now()));
-        self.cache.insert_rc(key_rc, value)
+        self.cache.insert_rc(key_rc, value, 0)
     }
 
     /// Gets a value and incrementing the internal frequency counter of that

@@ -382,6 +382,30 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
         self.freq_list.peek_lfu()
     }
 
+    /// Peeks at the next value to be evicted, if there is one. This will not
+    /// increment the access counter for that value.
+    #[inline]
+    #[must_use]
+    pub fn peek_lfu_frequency(&self) -> Option<(&Value, usize)> {
+        self.freq_list.peek_lfu_frequency()
+    }
+
+    /// Peeks at the highest ranked value, if there is one. This will not
+    /// increment the access counter for that value.
+    #[inline]
+    #[must_use]
+    pub fn peek_mfu(&self) -> Option<&Value> {
+        self.freq_list.peek_mfu()
+    }
+
+    /// Peeks at the highest ranked value and its frequency, if there is one. This will not
+    /// increment the access counter for that value.
+    #[inline]
+    #[must_use]
+    pub fn peek_mfu_frequency(&self) -> Option<(&Value, usize)> {
+        self.freq_list.peek_mfu_frequency()
+    }
+
     /// Returns the current capacity of the cache.
     #[inline]
     #[must_use]
@@ -863,5 +887,21 @@ mod bookkeeping {
         for i in 0..10 {
             assert!(cache.get(&i).is_none());
         }
+    }
+
+    #[test]
+    fn peek_frequency_is_correct() {
+        let mut cache = LfuCache::unbounded();
+        for i in 0..10 {
+            cache.insert(i, i);
+        }
+        for i in 0..10 {
+            for _ in 0..i * 2 {
+                cache.get(&i);
+            }
+        }
+
+        assert_eq!(cache.peek_lfu_frequency().unwrap().1, 0);
+        assert_eq!(cache.peek_mfu_frequency().unwrap().1, 18);
     }
 }

@@ -332,20 +332,20 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
     /// Returns the most recently added, most frequently accessed item with its frequency and key if it
     /// exists.
     #[inline]
-    pub(super) fn peek_lfu_key_value_frequency(&self) -> Option<((&Key, &T), usize)> {
+    pub(super) fn peek_lfu_key_value_frequency(&self) -> Option<(&Key, &T, usize)> {
         self.head.and_then(|node| {
             let n = unsafe { node.as_ref() };
-            n.peek().map(|inner| (inner, n.frequency))
+            n.peek().map(|inner| (inner.0, inner.1, n.frequency))
         })
     }
 
     /// Returns the most recently added, most frequently accessed item with its frequency and key if it
     /// exists.
     #[inline]
-    pub(super) fn peek_mfu_key_value_frequency(&self) -> Option<((&Key, &T), usize)> {
+    pub(super) fn peek_mfu_key_value_frequency(&self) -> Option<(&Key, &T, usize)> {
         self.tail.and_then(|node| {
             let n = unsafe { node.as_ref() };
-            n.peek().map(|inner| (inner, n.frequency))
+            n.peek().map(|inner| (inner.0, inner.1, n.frequency))
         })
     }
 

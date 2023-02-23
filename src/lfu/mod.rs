@@ -410,9 +410,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
     #[inline]
     #[must_use]
     pub fn peek_lfu(&self) -> Option<&Value> {
-        self.freq_list
-            .peek_lfu_key_value_frequency()
-            .map(|e| e.0 .1)
+        self.freq_list.peek_lfu_key_value_frequency().map(|e| e.1)
     }
 
     /// Peeks at the next value to be evicted, if there is one. This will not
@@ -422,14 +420,14 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
     pub fn peek_lfu_frequency(&self) -> Option<(&Value, usize)> {
         self.freq_list
             .peek_lfu_key_value_frequency()
-            .map(|e| (e.0 .1, e.1))
+            .map(|e| (e.1, e.2))
     }
 
     /// Peeks at the highest ranked value, key and its frequency, if there is one. This will not
     /// increment the access counter for that value.
     #[inline]
     #[must_use]
-    pub fn peek_lfu_key_value_frequency(&self) -> Option<((&Key, &Value), usize)> {
+    pub fn peek_lfu_key_value_frequency(&self) -> Option<(&Key, &Value, usize)> {
         self.freq_list.peek_lfu_key_value_frequency()
     }
 
@@ -438,9 +436,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
     #[inline]
     #[must_use]
     pub fn peek_mfu(&self) -> Option<&Value> {
-        self.freq_list
-            .peek_mfu_key_value_frequency()
-            .map(|e| e.0 .1)
+        self.freq_list.peek_mfu_key_value_frequency().map(|e| e.1)
     }
 
     /// Peeks at the highest ranked value and its frequency, if there is one. This will not
@@ -450,14 +446,14 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
     pub fn peek_mfu_frequency(&self) -> Option<(&Value, usize)> {
         self.freq_list
             .peek_mfu_key_value_frequency()
-            .map(|e| (e.0 .1, e.1))
+            .map(|e| (e.1, e.2))
     }
 
     /// Peeks at the highest ranked value, key and its frequency, if there is one. This will not
     /// increment the access counter for that value.
     #[inline]
     #[must_use]
-    pub fn peek_mfu_key_value_frequency(&self) -> Option<((&Key, &Value), usize)> {
+    pub fn peek_mfu_key_value_frequency(&self) -> Option<(&Key, &Value, usize)> {
         self.freq_list.peek_mfu_key_value_frequency()
     }
 

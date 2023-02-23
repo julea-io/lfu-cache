@@ -254,6 +254,12 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
     /// Removes a value from the cache by key, if it exists.
     #[inline]
     pub fn remove(&mut self, key: &Key) -> Option<Value> {
+        self.remove_with_frequency(key).map(|o| o.0)
+    }
+
+    /// Removes a value from the cache by key, if it exists and returns the recorded frequency.
+    #[inline]
+    pub fn remove_with_frequency(&mut self, key: &Key) -> Option<(Value, usize)> {
         self.lookup.0.remove(key).map(|node| {
             // SAFETY: We have unique access to self. At this point, we've
             // removed the entry from the lookup map but haven't removed it from
@@ -274,7 +280,7 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
                 freq_head.detach();
             }
             self.len -= 1;
-            detached.value
+            (detached.value, unsafe { freq_node.as_ref() }.frequency)
         })
     }
 

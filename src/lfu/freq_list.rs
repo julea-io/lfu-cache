@@ -73,6 +73,14 @@ impl<Key: Hash + Eq, T> Debug for FrequencyList<Key, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut dbg = f.debug_struct("FrequencyList");
         let mut node = self.head;
+        dbg.field(
+            "head freq {}",
+            &unsafe { self.head.unwrap().as_ref() }.frequency,
+        );
+        dbg.field(
+            "tail freq {}",
+            &unsafe { self.tail.unwrap().as_ref() }.frequency,
+        );
         while let Some(cur_node) = node {
             let cur_node = unsafe { cur_node.as_ref() };
             dbg.field(
@@ -175,17 +183,18 @@ impl<Key: Hash + Eq, T> FrequencyList<Key, T> {
                 } else {
                     self.init_front()
                 };
-                let entry = Node::push(prev, Detached::new(key, value));
-                if unsafe { prev.as_ref() }.frequency != frequency {
+                let mut entry = Node::push(prev, Detached::new(key, value));
+                if unsafe { entry.as_ref().next.is_some() } {
                     self.update(entry);
-                    unsafe { head.as_ref().prev.unwrap().as_mut().frequency = frequency }
                 }
+                unsafe { entry.as_mut().owner.as_mut() }.frequency = frequency;
                 entry
             }
             _ => {
-                // Append a new tail
-                let entry = Node::push(head, Detached::new(key, value));
+                // Append a new tail; we iterated over all the available nodes
+                let mut entry = Node::push(head, Detached::new(key, value));
                 self.update(entry);
+                unsafe { entry.as_mut().owner.as_mut() }.frequency = frequency;
                 entry
             }
         }
@@ -597,5 +606,21 @@ mod frequency_list {
         // unleak entry
         unsafe { Box::from_raw(entry_0.as_ptr()) };
         unsafe { Box::from_raw(entry_1.as_ptr()) };
+    }
+
+    #[test]
+    fn update_frequency_based() {
+        let mut list = init_list();
+
+        let entry = list.insert_with_frequency(Rc::new(1), 1, 0);
+        list.update(entry);
+        list.update(entry);
+        list.update(entry);
+        dbg!(&list);
+        list.insert_with_frequency(Rc::new(2), 2, 1);
+        assert_eq!(
+            list.peek_lfu_key_value_frequency(),
+            Some((&2i32, &2i32, 1usize))
+        );
     }
 }

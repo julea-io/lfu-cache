@@ -276,6 +276,9 @@ impl<Key: Hash + Eq, Value> LfuCache<Key, Value> {
                 if self.freq_list.head == Some(NonNull::from(&*freq_head)) {
                     self.freq_list.head = freq_head.next;
                 }
+                if self.freq_list.tail == Some(NonNull::from(&*freq_head)) {
+                    self.freq_list.tail = freq_head.prev;
+                }
 
                 freq_head.detach();
             }
